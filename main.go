@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -9,22 +11,18 @@ import (
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	buffer := make([]byte, 1024)
+	reader := bufio.NewReader(conn)
 
 	for {
-		n, err := conn.Read(buffer)
+		msg, err := reader.ReadString('\n')
 
-		if n > 0 {
-			fmt.Println("Received data:", string(buffer[:n]))
-
-			cn, writeErr := conn.Write(buffer[:n])
-
+		if msg != "" {
+			fmt.Println(msg)
+			_, writeErr := conn.Write([]byte(msg))
 			if writeErr != nil {
 				fmt.Println("Error echoing data:", writeErr)
 				return
 			}
-
-			fmt.Println("Sent bytes:", cn)
 		}
 
 		if err != nil {
@@ -36,6 +34,52 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 	}
+}
+
+func writeFrame(conn net.Conn, payload []byte) error {
+	length := uint32(len(payload))
+	header := make([]byte, 4)
+
+	binary.BigEndian.PutUint32(header, length)
+
+	_, err := conn.Write(header)
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.Write(payload)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func readFrame(conn net.Conn) ([]byte, error) {
+	header := make([]byte, 4)
+
+	_, err := io.ReadFull(conn, header)
+
+	if err != nil {
+		fmt.Println("Error in reading payload: ", err)
+		return nil, err
+	}
+
+	length := binary.BigEndian.Uint32(header)
+	const maxFrameSize = 1 << 20
+
+	if length > maxFrameSize {
+		return nil, fmt.Errorf("frame too large: %d bytes", length)
+	}
+
+	payload := make([]byte, int(length))
+
+	_, err = io.ReadFull(conn, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	return payload, nil
 }
 
 func main() {
